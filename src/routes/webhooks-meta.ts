@@ -31,6 +31,49 @@ const router = Router();
 const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
 if (!META_VERIFY_TOKEN) throw new Error('META_VERIFY_TOKEN is not set');
 
+// Dev-only fallback for resolving Meta's IG-Scoped User ID to a handle when
+// sender.username isn't populated and the Graph API resolver also fails (today
+// the token isn't a valid Page Access Token; M12 / M13 will fix). JSON shape:
+// { "<ig-scoped-id>": "<handle>" }. Empty/unset = no fallback.
+const IG_HANDLE_MAP: Record<string, string> = (() => {
+  const raw = process.env.META_TEST_IG_HANDLE_MAP;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed).map(([k, v]) => [k, String(v).toLowerCase()]),
+    );
+  } catch (e) {
+    console.error('META_TEST_IG_HANDLE_MAP is not valid JSON; ignoring', e);
+    return {};
+  }
+})();
+
+const RESOLVER_TIMEOUT_MS = 5000;
+
+// Resolve an IG-Scoped User ID to a username via Graph API. Returns null on
+// any failure (network, bad token, missing field) — caller falls back to map.
+// When M12 ships a working Page Access Token, this path lights up automatically
+// without any M4a code change.
+async function resolveIgUsername(igScopedId: string): Promise<string | null> {
+  const token = process.env.META_PAGE_ACCESS_TOKEN;
+  if (!token) return null;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RESOLVER_TIMEOUT_MS);
+  try {
+    const url = `https://graph.facebook.com/v18.0/${encodeURIComponent(igScopedId)}?fields=username&access_token=${encodeURIComponent(token)}`;
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { username?: string };
+    return body.username?.toLowerCase() ?? null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // GET — subscription handshake. Meta hits this once per `messages` field
 // subscription change. M11-owned but lives here until M11's full module ships.
 router.get('/webhooks/meta', (req: Request, res: Response) => {
@@ -68,18 +111,26 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
       if (ev.message?.is_echo) continue;
 
       const mid = ev.message?.mid;
-      const senderHandle = ev.sender?.username?.toLowerCase();
+      const senderId = ev.sender?.id;
       const text = ev.message?.text ?? '';
 
-      // DIAGNOSTIC — Phase 5 only. Logs the sender shape Meta actually delivers so
-      // we can see whether `username` is present or whether we need a Graph API lookup.
-      // Remove after Phase 5 is verified.
+      // 3-tier identity resolution:
+      //   1. Meta-delivered sender.username (rare for classic Page-based webhooks)
+      //   2. Graph API lookup (no-ops today; works when M12 sorts the token)
+      //   3. Env-var fallback map (dev unblock; remove after tier 2 lights up)
+      let senderHandle = ev.sender?.username?.toLowerCase();
+      if (!senderHandle && senderId) {
+        senderHandle =
+          (await resolveIgUsername(senderId)) ??
+          IG_HANDLE_MAP[senderId];
+      }
+
+      // DIAGNOSTIC — Phase 5 only. Remove in cleanup commit.
       console.log(JSON.stringify({
         kind: 'm4a_diag',
-        sender: ev.sender,
-        recipient: ev.recipient,
-        mid,
+        senderId,
         senderHandle,
+        mid,
         text_preview: text.slice(0, 80),
       }));
 
