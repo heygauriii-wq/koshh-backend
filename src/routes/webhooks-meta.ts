@@ -125,15 +125,6 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
           IG_HANDLE_MAP[senderId];
       }
 
-      // DIAGNOSTIC — Phase 5 only. Remove in cleanup commit.
-      console.log(JSON.stringify({
-        kind: 'm4a_diag',
-        senderId,
-        senderHandle,
-        mid,
-        text_preview: text.slice(0, 80),
-      }));
-
       if (!mid || !senderHandle) continue;
 
       // 4a.2b — idempotency
