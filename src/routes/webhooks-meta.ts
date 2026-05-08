@@ -71,6 +71,18 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
       const senderHandle = ev.sender?.username?.toLowerCase();
       const text = ev.message?.text ?? '';
 
+      // DIAGNOSTIC — Phase 5 only. Logs the sender shape Meta actually delivers so
+      // we can see whether `username` is present or whether we need a Graph API lookup.
+      // Remove after Phase 5 is verified.
+      console.log(JSON.stringify({
+        kind: 'm4a_diag',
+        sender: ev.sender,
+        recipient: ev.recipient,
+        mid,
+        senderHandle,
+        text_preview: text.slice(0, 80),
+      }));
+
       if (!mid || !senderHandle) continue;
 
       // 4a.2b — idempotency
