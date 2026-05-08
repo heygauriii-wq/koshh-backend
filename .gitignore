@@ -3,3 +3,5 @@ dist
 .env
 .env.local
 supabase/.temp
+.claude/
+.4a-build.md
