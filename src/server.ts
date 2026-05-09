@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import { requireAuth } from './auth/require-auth';
 import { deleteMe } from './routes/me';
 import { startBoss } from './jobs/boss';
@@ -34,6 +35,13 @@ app.use(cors({ origin: process.env.ALLOWED_ORIGINS!.split(',') }));
 // captureRawBody is express.json({ verify }) — parses JSON identically AND
 // stashes raw bytes on req.rawBody for HMAC verification on /webhooks/meta.
 app.use(captureRawBody);
+
+app.use('/webhooks/meta', rateLimit({
+  windowMs: 60_000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+}));
 
 app.get('/health', (_, res) => res.json({ ok: true }));
 
