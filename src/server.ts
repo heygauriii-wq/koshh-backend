@@ -9,6 +9,26 @@ import { registerIngestPipelineQueue } from './jobs/ingest-pipeline';
 import { captureRawBody } from './lib/webhook-trust';
 import webhooksMetaRouter from './routes/webhooks-meta';
 
+async function probeMetaToken() {
+  const token = process.env.META_PAGE_ACCESS_TOKEN;
+  if (!token) {
+    console.warn('[boot] META_PAGE_ACCESS_TOKEN missing — webhook resolver will fall through tiers');
+    return;
+  }
+  try {
+    const r = await fetch(`https://graph.facebook.com/v19.0/me?access_token=${token}`);
+    if (!r.ok) {
+      const body = await r.text();
+      console.error('[boot] META_PAGE_ACCESS_TOKEN invalid:', body.slice(0, 200));
+    } else {
+      const data = (await r.json()) as { id?: string; name?: string };
+      console.log('[boot] META_PAGE_ACCESS_TOKEN ok:', data.name ?? data.id);
+    }
+  } catch (e) {
+    console.error('[boot] META_PAGE_ACCESS_TOKEN probe threw:', e);
+  }
+}
+
 const app = express();
 app.use(cors({ origin: process.env.ALLOWED_ORIGINS!.split(',') }));
 // captureRawBody is express.json({ verify }) — parses JSON identically AND
@@ -31,6 +51,7 @@ app.use('/', webhooksMetaRouter);
 const port = Number(process.env.PORT ?? 8080);
 
 (async () => {
+  probeMetaToken().catch(() => {});
   await startBoss();
   await registerCleanupWorker();
   await registerIngestPipelineQueue();
