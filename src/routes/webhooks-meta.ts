@@ -120,9 +120,23 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
       //   3. Env-var fallback map (dev unblock; remove after tier 2 lights up)
       let senderHandle = ev.sender?.username?.toLowerCase();
       if (!senderHandle && senderId) {
-        senderHandle =
-          (await resolveIgUsername(senderId)) ??
-          IG_HANDLE_MAP[senderId];
+        const tier2 = await resolveIgUsername(senderId);
+        if (tier2) {
+          senderHandle = tier2;
+        } else {
+          const tier3 = IG_HANDLE_MAP[senderId];
+          if (tier3) {
+            console.warn('[m4a] tier_3_fallback', {
+              sender_id: senderId,
+              resolved: tier3,
+              in_production: process.env.NODE_ENV === 'production',
+            });
+            if (process.env.NODE_ENV === 'production') {
+              console.error('[m4a] WARNING: META_TEST_IG_HANDLE_MAP active in production — remove once Graph API token works');
+            }
+            senderHandle = tier3;
+          }
+        }
       }
 
       if (!mid || !senderHandle) continue;
