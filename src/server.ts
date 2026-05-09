@@ -9,6 +9,7 @@ import { registerCleanupWorker } from './jobs/cleanup-deleted-user';
 import { registerIngestPipelineQueue } from './jobs/ingest-pipeline';
 import { captureRawBody } from './lib/webhook-trust';
 import webhooksMetaRouter from './routes/webhooks-meta';
+import { healthRouter } from './routes/health';
 
 async function probeMetaToken() {
   const token = process.env.META_PAGE_ACCESS_TOKEN;
@@ -44,6 +45,7 @@ app.use('/webhooks/meta', rateLimit({
 }));
 
 app.get('/health', (_, res) => res.json({ ok: true }));
+app.use('/health', healthRouter);
 
 app.use('/me', requireAuth);
 
