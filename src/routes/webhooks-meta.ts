@@ -94,6 +94,13 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
   // 4a.2a — signature verify
   const sig = verifyMetaSignature(req);
   if (!sig.ok) {
+    // TEMP Step 9 debug — surface why /webhooks/meta is 401-ing. Remove once verified.
+    console.warn('[m4a] verify_failed', {
+      reason: sig.reason,
+      has_sig_header: !!req.header('x-hub-signature-256'),
+      sig_header_prefix: (req.header('x-hub-signature-256') ?? '').slice(0, 14),
+      body_bytes: (req as Request & { rawBody?: Buffer }).rawBody?.length ?? 0,
+    });
     if (sig.reason === 'mismatch') return res.sendStatus(401);
     if (sig.reason === 'missing_signature') return res.sendStatus(401);
     if (sig.reason === 'malformed_signature') return res.sendStatus(400);

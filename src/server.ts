@@ -65,6 +65,9 @@ const port = Number(process.env.PORT ?? 8080);
 
 (async () => {
   probeMetaToken().catch(() => {});
+  // TEMP Step 9 debug — confirm App Secret shape on Railway. Remove once webhook 200s.
+  const sec = process.env.META_APP_SECRET ?? '';
+  console.log('[boot] META_APP_SECRET length:', sec.length, 'hex32?:', /^[a-f0-9]{32}$/i.test(sec));
   await startBoss();
   await registerCleanupWorker();
   await registerIngestPipelineQueue();
