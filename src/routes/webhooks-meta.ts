@@ -31,30 +31,10 @@ const router = Router();
 const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
 if (!META_VERIFY_TOKEN) throw new Error('META_VERIFY_TOKEN is not set');
 
-// Dev-only fallback for resolving Meta's IG-Scoped User ID to a handle when
-// sender.username isn't populated and the Graph API resolver also fails (today
-// the token isn't a valid Page Access Token; M12 / M13 will fix). JSON shape:
-// { "<ig-scoped-id>": "<handle>" }. Empty/unset = no fallback.
-const IG_HANDLE_MAP: Record<string, string> = (() => {
-  const raw = process.env.META_TEST_IG_HANDLE_MAP;
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).map(([k, v]) => [k, String(v).toLowerCase()]),
-    );
-  } catch (e) {
-    console.error('META_TEST_IG_HANDLE_MAP is not valid JSON; ignoring', e);
-    return {};
-  }
-})();
-
 const RESOLVER_TIMEOUT_MS = 5000;
 
-// Resolve an IG-Scoped User ID to a username via Graph API. Returns null on
-// any failure (network, bad token, missing field) — caller falls back to map.
-// When M12 ships a working Page Access Token, this path lights up automatically
-// without any M4a code change.
+// Resolve an IG-Scoped User ID to a username via the Instagram Graph API.
+// Returns null on any failure (network, bad token, missing field).
 async function resolveIgUsername(igScopedId: string): Promise<string | null> {
   const token = process.env.META_PAGE_ACCESS_TOKEN;
   if (!token) return null;
@@ -94,13 +74,6 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
   // 4a.2a — signature verify
   const sig = verifyMetaSignature(req);
   if (!sig.ok) {
-    // TEMP Step 9 debug — surface why /webhooks/meta is 401-ing. Remove once verified.
-    console.warn('[m4a] verify_failed', {
-      reason: sig.reason,
-      has_sig_header: !!req.header('x-hub-signature-256'),
-      sig_header_prefix: (req.header('x-hub-signature-256') ?? '').slice(0, 14),
-      body_bytes: (req as Request & { rawBody?: Buffer }).rawBody?.length ?? 0,
-    });
     if (sig.reason === 'mismatch') return res.sendStatus(401);
     if (sig.reason === 'missing_signature') return res.sendStatus(401);
     if (sig.reason === 'malformed_signature') return res.sendStatus(400);
@@ -121,29 +94,12 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
       const senderId = ev.sender?.id;
       const text = ev.message?.text ?? '';
 
-      // 3-tier identity resolution:
-      //   1. Meta-delivered sender.username (rare for classic Page-based webhooks)
-      //   2. Graph API lookup (no-ops today; works when M12 sorts the token)
-      //   3. Env-var fallback map (dev unblock; remove after tier 2 lights up)
+      // Identity resolution: prefer Meta-delivered sender.username, fall back
+      // to a Graph API lookup against the IGSID. Both return lowercase handles.
       let senderHandle = ev.sender?.username?.toLowerCase();
       if (!senderHandle && senderId) {
-        const tier2 = await resolveIgUsername(senderId);
-        if (tier2) {
-          senderHandle = tier2;
-        } else {
-          const tier3 = IG_HANDLE_MAP[senderId];
-          if (tier3) {
-            console.warn('[m4a] tier_3_fallback', {
-              sender_id: senderId,
-              resolved: tier3,
-              in_production: process.env.NODE_ENV === 'production',
-            });
-            if (process.env.NODE_ENV === 'production') {
-              console.error('[m4a] WARNING: META_TEST_IG_HANDLE_MAP active in production — remove once Graph API token works');
-            }
-            senderHandle = tier3;
-          }
-        }
+        const resolved = await resolveIgUsername(senderId);
+        if (resolved) senderHandle = resolved;
       }
 
       if (!mid || !senderHandle) continue;
