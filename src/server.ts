@@ -18,13 +18,13 @@ async function probeMetaToken() {
     return;
   }
   try {
-    const r = await fetch(`https://graph.facebook.com/v19.0/me?access_token=${token}`);
+    const r = await fetch(`https://graph.instagram.com/v23.0/me?fields=user_id,username&access_token=${token}`);
     if (!r.ok) {
       const body = await r.text();
       console.error('[boot] META_PAGE_ACCESS_TOKEN invalid:', body.slice(0, 200));
     } else {
-      const data = (await r.json()) as { id?: string; name?: string };
-      console.log('[boot] META_PAGE_ACCESS_TOKEN ok:', data.name ?? data.id);
+      const data = (await r.json()) as { id?: string; user_id?: string; username?: string };
+      console.log('[boot] META_PAGE_ACCESS_TOKEN ok:', data.username ?? data.user_id ?? data.id);
     }
   } catch (e) {
     console.error('[boot] META_PAGE_ACCESS_TOKEN probe threw:', e);

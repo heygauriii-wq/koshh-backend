@@ -62,7 +62,7 @@ async function resolveIgUsername(igScopedId: string): Promise<string | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RESOLVER_TIMEOUT_MS);
   try {
-    const url = `https://graph.facebook.com/v18.0/${encodeURIComponent(igScopedId)}?fields=username&access_token=${encodeURIComponent(token)}`;
+    const url = `https://graph.instagram.com/v23.0/${encodeURIComponent(igScopedId)}?fields=username&access_token=${encodeURIComponent(token)}`;
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) return null;
     const body = (await res.json()) as { username?: string };
