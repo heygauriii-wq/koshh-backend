@@ -32,6 +32,9 @@ async function probeMetaToken() {
 }
 
 const app = express();
+// Railway sits behind one reverse proxy. Trust that single hop only — not `true`,
+// which would let clients spoof X-Forwarded-For and bypass rate-limit keys.
+app.set('trust proxy', 1);
 app.use(cors({ origin: process.env.ALLOWED_ORIGINS!.split(',') }));
 // captureRawBody is express.json({ verify }) — parses JSON identically AND
 // stashes raw bytes on req.rawBody for HMAC verification on /webhooks/meta.
