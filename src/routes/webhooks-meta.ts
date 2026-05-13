@@ -116,6 +116,25 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
       // added later and this file forgets to handle it.
       const route = routeDM(parsed, text);
 
+      // Structured audit line for inbound DMs. Sibling of outbound_dm_stub —
+      // grep Railway logs by `kind:"inbound_webhook"`. Logs counts and hosts,
+      // not message text or full URLs, to avoid leaking PII and lookaside
+      // signing tokens.
+      console.log(JSON.stringify({
+        kind: 'inbound_webhook',
+        ts: new Date().toISOString(),
+        platform: 'instagram',
+        mid,
+        sender_handle: senderHandle,
+        has_text: text.length > 0,
+        attachment_types: (ev.message?.attachments ?? []).map((a) => a.type ?? 'unknown'),
+        urls_count: parsed.urls.length,
+        url_hosts: Array.from(new Set(parsed.urls.map((u) => {
+          try { return new URL(u).hostname; } catch { return 'invalid'; }
+        }))),
+        route: route.kind,
+      }));
+
       switch (route.kind) {
         case 'link': {
           sends.push(handleLinkDM({
