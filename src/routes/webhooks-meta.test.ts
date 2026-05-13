@@ -127,7 +127,7 @@ describe('POST /webhooks/meta', () => {
     expect(vi.mocked(bossModule.boss.send)).not.toHaveBeenCalled();
   });
 
-  it('processes a save DM end-to-end', async () => {
+  it('processes a save DM end-to-end (inserts staging row, not direct boss.send)', async () => {
     const userId = await seedLinkedHandle('vitest_handle');
     const app = makeApp();
     const mid = `vitest_wh_save_${Date.now()}`;
@@ -142,21 +142,24 @@ describe('POST /webhooks/meta', () => {
     expect(vi.mocked(dmStub.sendDM)).toHaveBeenCalledWith(
       expect.objectContaining({ copy_key: 'step1_ack', handle: 'vitest_handle' }),
     );
-    // Tightened from build guide — assert queue payload, not just that boss was touched.
-    // Catches drift in the M5 contract.
-    expect(vi.mocked(bossModule.boss.send)).toHaveBeenCalledWith(
-      'ingest-pipeline',
-      expect.objectContaining({
-        user_id: userId,
-        sender_handle: 'vitest_handle',
-        platform: 'instagram',
-        raw_url: 'https://insta.com/reel/abc',
-        tags: ['funny'],
-        annotation: 'great hook',
-        mid,
-        url_index: 0,
-      }),
-    );
+    // Step 10: boss.send is deferred to the sweeper. Webhook just stages.
+    expect(vi.mocked(bossModule.boss.send)).not.toHaveBeenCalled();
+
+    const { data: rows } = await supabaseAdmin
+      .from('dm_staging')
+      .select('*')
+      .eq('save_mid', mid);
+    expect(rows).toHaveLength(1);
+    expect(rows![0]).toMatchObject({
+      user_id: userId,
+      sender_handle: 'vitest_handle',
+      platform: 'instagram',
+      raw_url: 'https://insta.com/reel/abc',
+      tags: ['funny'],
+      annotation: 'great hook',
+      url_index: 0,
+      enqueued_at: null,
+    });
   });
 
   it('returns 200 silently on duplicate mid', async () => {
@@ -169,18 +172,24 @@ describe('POST /webhooks/meta', () => {
     expect(first.status).toBe(200);
 
     vi.mocked(dmStub.sendDM).mockClear();
-    vi.mocked(bossModule.boss.send).mockClear();
 
     const second = await postSigned(app, body);
     expect(second.status).toBe(200);
     expect(vi.mocked(dmStub.sendDM)).not.toHaveBeenCalled();
-    expect(vi.mocked(bossModule.boss.send)).not.toHaveBeenCalled();
+
+    // Idempotency: only one staging row total across both deliveries.
+    const { data: rows } = await supabaseAdmin
+      .from('dm_staging')
+      .select('id')
+      .eq('save_mid', mid);
+    expect(rows).toHaveLength(1);
   });
 
   it('replies "stranger" when sender handle is not linked', async () => {
     const app = makeApp();
+    const mid = `vitest_wh_stranger_${Date.now()}`;
     const body = makeBody({
-      mid: `vitest_wh_stranger_${Date.now()}`,
+      mid,
       text: 'https://insta.com/reel/x',
       username: 'never_linked_handle',
     });
@@ -190,10 +199,15 @@ describe('POST /webhooks/meta', () => {
     expect(vi.mocked(dmStub.sendDM)).toHaveBeenCalledWith(
       expect.objectContaining({ copy_key: 'stranger', handle: 'never_linked_handle' }),
     );
-    expect(vi.mocked(bossModule.boss.send)).not.toHaveBeenCalled();
+    // Stranger path bails before staging — no row inserted.
+    const { data: rows } = await supabaseAdmin
+      .from('dm_staging')
+      .select('id')
+      .eq('save_mid', mid);
+    expect(rows).toHaveLength(0);
   });
 
-  it('passes ig_post_media_id and title to boss queue for share attachments', async () => {
+  it('threads ig_post_media_id and title into the staging row for share attachments', async () => {
     const userId = await seedLinkedHandle('vitest_meta');
     const app = makeApp();
     const mid = `vitest_wh_meta_${Date.now()}`;
@@ -215,19 +229,21 @@ describe('POST /webhooks/meta', () => {
     const res = await postSigned(app, body);
 
     expect(res.status).toBe(200);
-    expect(vi.mocked(bossModule.boss.send)).toHaveBeenCalledWith(
-      'ingest-pipeline',
-      expect.objectContaining({
-        user_id: userId,
-        raw_url: 'https://lookaside.fbsbx.com/abc',
-        attachment_type: 'ig_post',
-        ig_post_media_id: '17891234567890',
-        title: 'creator caption from IG',
-      }),
-    );
+    const { data: rows } = await supabaseAdmin
+      .from('dm_staging')
+      .select('*')
+      .eq('save_mid', mid);
+    expect(rows).toHaveLength(1);
+    expect(rows![0]).toMatchObject({
+      user_id: userId,
+      raw_url: 'https://lookaside.fbsbx.com/abc',
+      attachment_type: 'ig_post',
+      ig_post_media_id: '17891234567890',
+      title: 'creator caption from IG',
+    });
   });
 
-  it('replies "no_url" on text-only DMs', async () => {
+  it('replies "no_url" on text-only DMs (no recent save to merge into)', async () => {
     await seedLinkedHandle('vitest_nourl');
     const app = makeApp();
     const body = makeBody({
@@ -241,6 +257,54 @@ describe('POST /webhooks/meta', () => {
     expect(vi.mocked(dmStub.sendDM)).toHaveBeenCalledWith(
       expect.objectContaining({ copy_key: 'no_url' }),
     );
-    expect(vi.mocked(bossModule.boss.send)).not.toHaveBeenCalled();
+  });
+
+  it('merges annotation into recent staging row and suppresses no_url reply', async () => {
+    const userId = await seedLinkedHandle('vitest_merge');
+    const app = makeApp();
+    const saveMid = `vitest_wh_save_for_merge_${Date.now()}`;
+    const textMid = `vitest_wh_text_for_merge_${Date.now()}`;
+
+    // First: the save event with an attachment share. Stages a row, sends step1_ack.
+    const saveRes = await postSigned(app, makeBody({
+      mid: saveMid,
+      text: '',
+      username: 'vitest_merge',
+      attachments: [
+        {
+          type: 'ig_reel',
+          payload: { url: 'https://www.instagram.com/reel/Cabc/' },
+        },
+      ],
+    }));
+    expect(saveRes.status).toBe(200);
+    expect(vi.mocked(dmStub.sendDM)).toHaveBeenCalledWith(
+      expect.objectContaining({ copy_key: 'step1_ack' }),
+    );
+
+    vi.mocked(dmStub.sendDM).mockClear();
+
+    // Then: a follow-up text event from same sender (the power-user annotation).
+    const textRes = await postSigned(app, makeBody({
+      mid: textMid,
+      text: 'great hook #funny',
+      username: 'vitest_merge',
+    }));
+    expect(textRes.status).toBe(200);
+
+    // No second reply — the annotation merged silently.
+    expect(vi.mocked(dmStub.sendDM)).not.toHaveBeenCalled();
+
+    // Staging row got the annotation + tags.
+    const { data: rows } = await supabaseAdmin
+      .from('dm_staging')
+      .select('annotation, tags, user_id')
+      .eq('save_mid', saveMid);
+    expect(rows).toHaveLength(1);
+    expect(rows![0]).toMatchObject({
+      user_id: userId,
+      annotation: 'great hook',
+      tags: ['funny'],
+    });
   });
 });

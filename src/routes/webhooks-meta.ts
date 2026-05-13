@@ -24,7 +24,7 @@ import { routeDM } from '../lib/dm-router';
 import { handleLinkDM } from '../handlers/link-dm';
 import { sendDM } from '../lib/dm-stub';
 import { supabaseAdmin } from '../lib/supabase-admin';
-import { boss } from '../jobs/boss';
+import { insertStagingRows, tryMergeAnnotation } from '../lib/dm-staging';
 
 const router = Router();
 
@@ -148,6 +148,18 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
           break;
         }
         case 'no_url': {
+          // Step 10: try to merge this text into a recent (≤10s) save event
+          // from the same sender. If we do, stay silent — the user already
+          // got step1_ack on the share leg and the annotation just attached.
+          // If no merge target exists, fall through to today's no_url copy.
+          const merge = await tryMergeAnnotation({
+            sender_handle: senderHandle,
+            platform: 'instagram',
+            annotation: parsed.annotation,
+            tags: parsed.tags,
+          });
+          if (merge.merged_count > 0) break;
+
           sends.push(sendDM({
             handle: senderHandle,
             platform: 'instagram',
@@ -195,29 +207,27 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
             copy_key: 'step1_ack',
           }));
 
-          // 4a.7 — fan-out to M5: one job per URL, same mid + url_index for
-          // trace. M3 invocation deferred to M5 step 5.3 per M4a DFD.
-          // If the URL came from a share attachment, hand M3 the canonical
-          // ig_post_media_id and creator caption so it doesn't have to re-parse.
-          for (let i = 0; i < parsed.urls.length; i++) {
-            const url = parsed.urls[i];
+          // 4a.7 — Step 10: buffer one staging row per URL. The dm-staging
+          // sweeper enqueues to ingest-pipeline once the merge window closes
+          // (or sooner if a follow-up text event merges the annotation in).
+          // M3 invocation still deferred to M5 step 5.3 per M4a DFD.
+          const stagingRows = parsed.urls.map((url, i) => {
             const attachment = parsed.attachments.find((a) => a.url === url);
-            sends.push(
-              boss.send('ingest-pipeline', {
-                user_id: live.user_id,
-                sender_handle: senderHandle,
-                platform: 'instagram',
-                raw_url: url,
-                annotation: parsed.annotation,
-                tags: parsed.tags,
-                mid,
-                url_index: i,
-                attachment_type: attachment?.type,
-                ig_post_media_id: attachment?.ig_post_media_id ?? undefined,
-                title: attachment?.title ?? undefined,
-              }),
-            );
-          }
+            return {
+              user_id: live.user_id,
+              sender_handle: senderHandle,
+              platform: 'instagram' as const,
+              raw_url: url,
+              url_index: i,
+              annotation: parsed.annotation,
+              tags: parsed.tags,
+              attachment_type: attachment?.type ?? null,
+              ig_post_media_id: attachment?.ig_post_media_id ?? null,
+              title: attachment?.title ?? null,
+              save_mid: mid,
+            };
+          });
+          sends.push(insertStagingRows(stagingRows));
           break;
         }
         default: {
