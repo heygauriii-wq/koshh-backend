@@ -19,6 +19,21 @@ describe('sniff (3.1)', () => {
         reason: 'unsupported_platform',
       });
     });
+
+    describe('lookaside (ig_post share)', () => {
+      it('emits instagram_lookaside when media_id is provided', () => {
+        const r = sniff('https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=xyz', {
+          ig_post_media_id: '17891234567890',
+        });
+        expect(r).toEqual({ kind: 'instagram_lookaside', media_id: '17891234567890' });
+      });
+
+      it('rejects lookaside URL when media_id is absent', () => {
+        const r = sniff('https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=xyz');
+        expect(r.kind).toBe('reject');
+        if (r.kind === 'reject') expect(r.reason).toBe('malformed_url');
+      });
+    });
   });
 
   describe('tiktok', () => {

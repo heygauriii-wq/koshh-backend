@@ -13,5 +13,5 @@ export const REJECT_COPY: Record<M3RejectReason, string> = {
   malformed_url:
     "That link doesn't look right. Koshh supports Instagram Reels, TikTok videos, and YouTube Shorts.",
   metadata_unavailable:
-    "Couldn't read that video's metadata — it might be private, deleted, or temporarily unavailable. If it's a YouTube Short, try the /shorts/ URL directly.",
+    "Couldn't read that post's metadata — it might be private, deleted, or temporarily unavailable. Try sharing it again, or paste the canonical URL.",
 };

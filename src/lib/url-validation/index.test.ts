@@ -6,6 +6,7 @@ describe('validateUrl (M3 integration)', () => {
 
   beforeEach(() => {
     vi.stubEnv('YOUTUBE_DATA_API_KEY', 'test-key-AIza0000');
+    vi.stubEnv('META_PAGE_ACCESS_TOKEN', 'test-page-token-EAA');
     fetchSpy = vi.spyOn(globalThis, 'fetch');
   });
   afterEach(() => {
@@ -26,6 +27,66 @@ describe('validateUrl (M3 integration)', () => {
         post_id: 'Cabc123',
         canonical_url: 'https://www.instagram.com/reel/Cabc123/',
       });
+    });
+  });
+
+  describe('instagram lookaside (ig_post share)', () => {
+    it('resolves lookaside URL via Graph API and accepts the canonical permalink', async () => {
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          permalink: 'https://www.instagram.com/p/Cabc123/',
+          media_type: 'VIDEO',
+        }), { status: 200 }),
+      );
+
+      const r = await validateUrl({
+        raw_url: 'https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=xyz',
+        ig_post_media_id: '17891234567890',
+        attachment_type: 'ig_post',
+      });
+
+      expect(r).toEqual({
+        ok: true,
+        platform: 'instagram',
+        post_id: 'Cabc123',
+        canonical_url: 'https://www.instagram.com/reel/Cabc123/',
+      });
+    });
+
+    it('rejects CAROUSEL_ALBUM as unsupported_content', async () => {
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          permalink: 'https://www.instagram.com/p/Cabc123/',
+          media_type: 'CAROUSEL_ALBUM',
+        }), { status: 200 }),
+      );
+
+      const r = await validateUrl({
+        raw_url: 'https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=xyz',
+        ig_post_media_id: '17891234567890',
+      });
+
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toBe('unsupported_content');
+    });
+
+    it('rejects as metadata_unavailable when Graph API returns 4xx', async () => {
+      fetchSpy.mockResolvedValueOnce(new Response('', { status: 401 }));
+
+      const r = await validateUrl({
+        raw_url: 'https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=xyz',
+        ig_post_media_id: '17891234567890',
+      });
+
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toBe('metadata_unavailable');
+    });
+
+    it('rejects lookaside URL as malformed when no media_id is provided', async () => {
+      const r = await validateUrl('https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=xyz');
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toBe('malformed_url');
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 
