@@ -134,6 +134,11 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
         }))),
         has_media_id: parsed.attachments.some((a) => a.ig_post_media_id !== null),
         has_title: parsed.attachments.some((a) => a.title !== null),
+        // TEMP probe for M3 lookaside-resolution smoke test. Revert once we
+        // capture a real ig_post_media_id from production. Not PII — the id
+        // is a Meta-side numeric identifier, not content. Revert pattern
+        // mirrors commit b2484dd (Step 9 debug probe revert).
+        _TEMP_media_id: parsed.attachments.find((a) => a.ig_post_media_id !== null)?.ig_post_media_id ?? null,
         route: route.kind,
       }));
 
