@@ -118,8 +118,8 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
 
       // Structured audit line for inbound DMs. Sibling of outbound_dm_stub —
       // grep Railway logs by `kind:"inbound_webhook"`. Logs counts and hosts,
-      // not message text or full URLs, to avoid leaking PII and lookaside
-      // signing tokens.
+      // not message text, full URLs, or caption content, to avoid leaking PII
+      // and lookaside signing tokens.
       console.log(JSON.stringify({
         kind: 'inbound_webhook',
         ts: new Date().toISOString(),
@@ -132,6 +132,8 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
         url_hosts: Array.from(new Set(parsed.urls.map((u) => {
           try { return new URL(u).hostname; } catch { return 'invalid'; }
         }))),
+        has_media_id: parsed.attachments.some((a) => a.ig_post_media_id !== null),
+        has_title: parsed.attachments.some((a) => a.title !== null),
         route: route.kind,
       }));
 
@@ -195,17 +197,24 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
 
           // 4a.7 — fan-out to M5: one job per URL, same mid + url_index for
           // trace. M3 invocation deferred to M5 step 5.3 per M4a DFD.
+          // If the URL came from a share attachment, hand M3 the canonical
+          // ig_post_media_id and creator caption so it doesn't have to re-parse.
           for (let i = 0; i < parsed.urls.length; i++) {
+            const url = parsed.urls[i];
+            const attachment = parsed.attachments.find((a) => a.url === url);
             sends.push(
               boss.send('ingest-pipeline', {
                 user_id: live.user_id,
                 sender_handle: senderHandle,
                 platform: 'instagram',
-                raw_url: parsed.urls[i],
+                raw_url: url,
                 annotation: parsed.annotation,
                 tags: parsed.tags,
                 mid,
                 url_index: i,
+                attachment_type: attachment?.type,
+                ig_post_media_id: attachment?.ig_post_media_id ?? undefined,
+                title: attachment?.title ?? undefined,
               }),
             );
           }

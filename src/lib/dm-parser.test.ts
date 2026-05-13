@@ -63,7 +63,28 @@ describe('parseDmBody', () => {
       ]);
       expect(r.urls).toEqual(['https://lookaside.fbsbx.com/abc']);
       expect(r.attachments).toEqual([
-        { type: 'ig_post', url: 'https://lookaside.fbsbx.com/abc' },
+        { type: 'ig_post', url: 'https://lookaside.fbsbx.com/abc', ig_post_media_id: null, title: null },
+      ]);
+    });
+
+    it('surfaces ig_post_media_id and title from share payload', () => {
+      const r = parseDmBody('', [
+        {
+          type: 'ig_post',
+          payload: {
+            url: 'https://lookaside.fbsbx.com/abc',
+            ig_post_media_id: '17891234567890',
+            title: 'creator caption here',
+          },
+        },
+      ]);
+      expect(r.attachments).toEqual([
+        {
+          type: 'ig_post',
+          url: 'https://lookaside.fbsbx.com/abc',
+          ig_post_media_id: '17891234567890',
+          title: 'creator caption here',
+        },
       ]);
     });
 
@@ -92,8 +113,8 @@ describe('parseDmBody', () => {
       ]);
       expect(r.urls).toEqual(['https://lookaside.fbsbx.com/x']);
       expect(r.attachments).toEqual([
-        { type: 'share', url: 'https://lookaside.fbsbx.com/x' },
-        { type: 'ig_post', url: 'https://lookaside.fbsbx.com/x' },
+        { type: 'share', url: 'https://lookaside.fbsbx.com/x', ig_post_media_id: null, title: null },
+        { type: 'ig_post', url: 'https://lookaside.fbsbx.com/x', ig_post_media_id: null, title: null },
       ]);
     });
 
@@ -112,7 +133,7 @@ describe('parseDmBody', () => {
         { type: 'image', payload: { url: 'https://lookaside.fbsbx.com/img.jpg' } },
       ]);
       expect(r.urls).toEqual([]);
-      expect(r.attachments).toEqual([{ type: 'image', url: null }]);
+      expect(r.attachments).toEqual([{ type: 'image', url: null, ig_post_media_id: null, title: null }]);
     });
 
     it('records story_mention attachments structurally but does not feed urls[]', () => {
@@ -120,7 +141,7 @@ describe('parseDmBody', () => {
         { type: 'story_mention', payload: { url: 'https://lookaside.fbsbx.com/story' } },
       ]);
       expect(r.urls).toEqual([]);
-      expect(r.attachments).toEqual([{ type: 'story_mention', url: null }]);
+      expect(r.attachments).toEqual([{ type: 'story_mention', url: null, ig_post_media_id: null, title: null }]);
     });
 
     it('records unknown attachment types with url:null', () => {
@@ -128,7 +149,7 @@ describe('parseDmBody', () => {
         { type: 'weird_new_type', payload: { url: 'https://x' } },
       ]);
       expect(r.urls).toEqual([]);
-      expect(r.attachments).toEqual([{ type: 'weird_new_type', url: null }]);
+      expect(r.attachments).toEqual([{ type: 'weird_new_type', url: null, ig_post_media_id: null, title: null }]);
     });
   });
 });

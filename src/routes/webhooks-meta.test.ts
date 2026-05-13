@@ -31,6 +31,7 @@ function makeBody(opts: {
   text: string;
   username: string;
   isEcho?: boolean;
+  attachments?: Array<{ type: string; payload: Record<string, unknown> }>;
 }) {
   return {
     object: 'instagram',
@@ -45,6 +46,7 @@ function makeBody(opts: {
           mid: opts.mid,
           text: opts.text,
           is_echo: opts.isEcho ?? false,
+          ...(opts.attachments ? { attachments: opts.attachments } : {}),
         },
       }],
     }],
@@ -189,6 +191,40 @@ describe('POST /webhooks/meta', () => {
       expect.objectContaining({ copy_key: 'stranger', handle: 'never_linked_handle' }),
     );
     expect(vi.mocked(bossModule.boss.send)).not.toHaveBeenCalled();
+  });
+
+  it('passes ig_post_media_id and title to boss queue for share attachments', async () => {
+    const userId = await seedLinkedHandle('vitest_meta');
+    const app = makeApp();
+    const mid = `vitest_wh_meta_${Date.now()}`;
+    const body = makeBody({
+      mid,
+      text: '',
+      username: 'vitest_meta',
+      attachments: [
+        {
+          type: 'ig_post',
+          payload: {
+            url: 'https://lookaside.fbsbx.com/abc',
+            ig_post_media_id: '17891234567890',
+            title: 'creator caption from IG',
+          },
+        },
+      ],
+    });
+    const res = await postSigned(app, body);
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(bossModule.boss.send)).toHaveBeenCalledWith(
+      'ingest-pipeline',
+      expect.objectContaining({
+        user_id: userId,
+        raw_url: 'https://lookaside.fbsbx.com/abc',
+        attachment_type: 'ig_post',
+        ig_post_media_id: '17891234567890',
+        title: 'creator caption from IG',
+      }),
+    );
   });
 
   it('replies "no_url" on text-only DMs', async () => {

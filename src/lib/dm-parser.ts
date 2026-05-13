@@ -10,17 +10,25 @@
 //
 // Pure function. No I/O. Returns deterministic arrays.
 
-// Raw attachment shape from Meta's `messages` webhook. The parser only reads
-// `type` and `payload.url`; M6 will read more fields off `parsed.attachments`
-// when it owns media fetching.
+// Raw attachment shape from Meta's `messages` webhook. Share-type payloads
+// (ig_post/share/ig_reel/reel) carry `ig_post_media_id` and `title` (the IG
+// creator's caption) alongside `url`; we surface them so M3 can canonicalize
+// without re-parsing the webhook.
 export type AttachmentInput = {
   type?: string;
-  payload?: { url?: string; [k: string]: unknown };
+  payload?: {
+    url?: string;
+    ig_post_media_id?: string;
+    title?: string;
+    [k: string]: unknown;
+  };
 };
 
 export type ParsedAttachment = {
   type: string;
-  url: string | null;   // null = type didn't contribute a URL to urls[]
+  url: string | null;              // null = type didn't contribute a URL to urls[]
+  ig_post_media_id: string | null; // canonical post ID (share types only)
+  title: string | null;            // IG creator's caption (share types only)
 };
 
 export type ParsedDM = {
@@ -66,11 +74,13 @@ export function parseDmBody(raw: string, attachments?: AttachmentInput[]): Parse
   for (const att of attachments ?? []) {
     const type = att.type ?? 'unknown';
     const url = att.payload?.url;
+    const ig_post_media_id = att.payload?.ig_post_media_id ?? null;
+    const title = att.payload?.title ?? null;
     if (SHARE_ATTACHMENT_TYPES.has(type) && typeof url === 'string' && url.length > 0) {
       urls.push(url);
-      parsedAttachments.push({ type, url });
+      parsedAttachments.push({ type, url, ig_post_media_id, title });
     } else {
-      parsedAttachments.push({ type, url: null });
+      parsedAttachments.push({ type, url: null, ig_post_media_id, title });
     }
   }
 
