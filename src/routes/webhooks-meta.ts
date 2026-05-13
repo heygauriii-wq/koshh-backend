@@ -19,7 +19,7 @@ import {
   verifyMetaSignature,
   checkAndRecord,
 } from '../lib/webhook-trust';
-import { parseDmBody } from '../lib/dm-parser';
+import { parseDmBody, type AttachmentInput } from '../lib/dm-parser';
 import { routeDM } from '../lib/dm-router';
 import { handleLinkDM } from '../handlers/link-dm';
 import { sendDM } from '../lib/dm-stub';
@@ -108,73 +108,94 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
       const idem = await checkAndRecord('meta', mid);
       if (!idem.fresh) continue;
 
-      // 4a.3 — parse
-      const parsed = parseDmBody(text);
+      // 4a.3 — parse. Attachments feed share-type URLs (ig_post/share/ig_reel/
+      // reel) into parsed.urls; other types are recorded structurally for M6.
+      const parsed = parseDmBody(text, ev.message?.attachments);
 
-      // 4a.4 — route
+      // 4a.4 — route. Exhaustive switch: TS will yell if a Route variant is
+      // added later and this file forgets to handle it.
       const route = routeDM(parsed, text);
 
-      if (route === 'link') {
-        sends.push(handleLinkDM({
-          sender_handle: senderHandle,
-          platform: 'instagram',
-          body: text.trim().toLowerCase(),
-          mid,
-        }));
-        continue;
-      }
-
-      if (route === 'no_url') {
-        sends.push(sendDM({
-          handle: senderHandle,
-          platform: 'instagram',
-          copy_key: 'no_url',
-        }));
-        continue;
-      }
-
-      // route === 'save' — 4a.5 sender validation
-      const { data: live, error: liveErr } = await supabaseAdmin
-        .from('linked_handles')
-        .select('user_id')
-        .eq('handle', senderHandle)
-        .eq('platform', 'instagram')
-        .is('unlinked_at', null)
-        .maybeSingle();
-
-      if (liveErr) throw liveErr;
-
-      if (!live) {
-        sends.push(sendDM({
-          handle: senderHandle,
-          platform: 'instagram',
-          copy_key: 'stranger',
-        }));
-        continue;
-      }
-
-      // 4a.6 — ack
-      sends.push(sendDM({
-        handle: senderHandle,
-        platform: 'instagram',
-        copy_key: 'step1_ack',
-      }));
-
-      // 4a.7 — fan-out to M5: one job per URL, same mid + url_index for trace.
-      // M3 invocation deferred to M5 step 5.3 per M4a DFD.
-      for (let i = 0; i < parsed.urls.length; i++) {
-        sends.push(
-          boss.send('ingest-pipeline', {
-            user_id: live.user_id,
+      switch (route.kind) {
+        case 'link': {
+          sends.push(handleLinkDM({
             sender_handle: senderHandle,
             platform: 'instagram',
-            raw_url: parsed.urls[i],
-            annotation: parsed.annotation,
-            tags: parsed.tags,
+            body: text.trim().toLowerCase(),
             mid,
-            url_index: i,
-          }),
-        );
+          }));
+          break;
+        }
+        case 'no_url': {
+          sends.push(sendDM({
+            handle: senderHandle,
+            platform: 'instagram',
+            copy_key: 'no_url',
+          }));
+          break;
+        }
+        case 'unsupported_attachment': {
+          // Got an attachment but no canonical post URL surfaced — user
+          // uploads, story_mention, ephemeral, or unknown type. M6 will own
+          // the actual fetch/store; for now we tell the user we can only
+          // handle forwarded posts and Reels.
+          sends.push(sendDM({
+            handle: senderHandle,
+            platform: 'instagram',
+            copy_key: 'unsupported_attachment',
+          }));
+          break;
+        }
+        case 'save': {
+          // 4a.5 sender validation
+          const { data: live, error: liveErr } = await supabaseAdmin
+            .from('linked_handles')
+            .select('user_id')
+            .eq('handle', senderHandle)
+            .eq('platform', 'instagram')
+            .is('unlinked_at', null)
+            .maybeSingle();
+
+          if (liveErr) throw liveErr;
+
+          if (!live) {
+            sends.push(sendDM({
+              handle: senderHandle,
+              platform: 'instagram',
+              copy_key: 'stranger',
+            }));
+            break;
+          }
+
+          // 4a.6 — ack
+          sends.push(sendDM({
+            handle: senderHandle,
+            platform: 'instagram',
+            copy_key: 'step1_ack',
+          }));
+
+          // 4a.7 — fan-out to M5: one job per URL, same mid + url_index for
+          // trace. M3 invocation deferred to M5 step 5.3 per M4a DFD.
+          for (let i = 0; i < parsed.urls.length; i++) {
+            sends.push(
+              boss.send('ingest-pipeline', {
+                user_id: live.user_id,
+                sender_handle: senderHandle,
+                platform: 'instagram',
+                raw_url: parsed.urls[i],
+                annotation: parsed.annotation,
+                tags: parsed.tags,
+                mid,
+                url_index: i,
+              }),
+            );
+          }
+          break;
+        }
+        default: {
+          const _exhaustive: never = route;
+          throw new Error(`unhandled route: ${JSON.stringify(_exhaustive)}`);
+        }
       }
     }
   }
@@ -203,7 +224,7 @@ type MetaWebhookPayload = {
         mid?: string;
         text?: string;
         is_echo?: boolean;
-        attachments?: unknown[];
+        attachments?: AttachmentInput[];
       };
     }>;
   }>;

@@ -13,7 +13,8 @@ type SendDMArgs = {
     // M4a Meta DM ingest:
     | 'step1_ack'
     | 'stranger'
-    | 'no_url';
+    | 'no_url'
+    | 'unsupported_attachment';
   args?: Record<string, string>;
 };
 
