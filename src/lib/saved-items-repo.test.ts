@@ -82,7 +82,7 @@ describe('saved-items-repo', () => {
     expect(r.id).toBeTruthy();
   });
 
-  it('updates on second call with same (user_id, platform, post_id); tags REPLACE not union', async () => {
+  it('updates on second call with same (user_id, platform, post_id); tags + annotation UNION', async () => {
     const r1 = await upsertOnSave({
       user_id: userId,
       platform: 'instagram',
@@ -111,8 +111,124 @@ describe('saved-items-repo', () => {
       .select('tags, annotation')
       .eq('id', r1.id)
       .single();
-    expect(data?.tags).toEqual(['new']);
-    expect(data?.annotation).toBe('second');
+    expect(data?.tags).toEqual(['old', 'new']);
+    expect(data?.annotation).toBe('first\nsecond');
+  });
+
+  it('re-DM with identical annotation does NOT duplicate it (line dedup)', async () => {
+    const r1 = await upsertOnSave({
+      user_id: userId,
+      platform: 'instagram',
+      post_id: 'CASE_DEDUP_ANN_011',
+      canonical_url: 'https://www.instagram.com/reel/CASE_DEDUP_ANN_011/',
+      saved_by_handle: 'tester',
+      saved_by_platform: 'instagram',
+      annotation: 'same note',
+      tags: [],
+    });
+    await upsertOnSave({
+      user_id: userId,
+      platform: 'instagram',
+      post_id: 'CASE_DEDUP_ANN_011',
+      canonical_url: 'https://www.instagram.com/reel/CASE_DEDUP_ANN_011/',
+      saved_by_handle: 'tester',
+      saved_by_platform: 'instagram',
+      annotation: 'same note',
+      tags: [],
+    });
+    const { data } = await supabaseAdmin
+      .from('saved_items')
+      .select('annotation')
+      .eq('id', r1.id)
+      .single();
+    expect(data?.annotation).toBe('same note');
+  });
+
+  it('re-DM with overlapping tags does NOT duplicate them (tag dedup)', async () => {
+    const r1 = await upsertOnSave({
+      user_id: userId,
+      platform: 'instagram',
+      post_id: 'CASE_DEDUP_TAGS_012',
+      canonical_url: 'https://www.instagram.com/reel/CASE_DEDUP_TAGS_012/',
+      saved_by_handle: 'tester',
+      saved_by_platform: 'instagram',
+      annotation: null,
+      tags: ['fitness', 'morning'],
+    });
+    await upsertOnSave({
+      user_id: userId,
+      platform: 'instagram',
+      post_id: 'CASE_DEDUP_TAGS_012',
+      canonical_url: 'https://www.instagram.com/reel/CASE_DEDUP_TAGS_012/',
+      saved_by_handle: 'tester',
+      saved_by_platform: 'instagram',
+      annotation: null,
+      tags: ['morning', 'routine'],
+    });
+    const { data } = await supabaseAdmin
+      .from('saved_items')
+      .select('tags')
+      .eq('id', r1.id)
+      .single();
+    expect(data?.tags).toEqual(['fitness', 'morning', 'routine']);
+  });
+
+  it('re-DM with empty new annotation keeps the existing one (never overwrites with empty)', async () => {
+    const r1 = await upsertOnSave({
+      user_id: userId,
+      platform: 'instagram',
+      post_id: 'CASE_EMPTY_NEW_013',
+      canonical_url: 'https://www.instagram.com/reel/CASE_EMPTY_NEW_013/',
+      saved_by_handle: 'tester',
+      saved_by_platform: 'instagram',
+      annotation: 'my note',
+      tags: [],
+    });
+    await upsertOnSave({
+      user_id: userId,
+      platform: 'instagram',
+      post_id: 'CASE_EMPTY_NEW_013',
+      canonical_url: 'https://www.instagram.com/reel/CASE_EMPTY_NEW_013/',
+      saved_by_handle: 'tester',
+      saved_by_platform: 'instagram',
+      annotation: null,
+      tags: [],
+    });
+    const { data } = await supabaseAdmin
+      .from('saved_items')
+      .select('annotation')
+      .eq('id', r1.id)
+      .single();
+    expect(data?.annotation).toBe('my note');
+  });
+
+  it('re-DM with new annotation when existing was empty: takes the new value verbatim', async () => {
+    const r1 = await upsertOnSave({
+      user_id: userId,
+      platform: 'instagram',
+      post_id: 'CASE_EMPTY_OLD_014',
+      canonical_url: 'https://www.instagram.com/reel/CASE_EMPTY_OLD_014/',
+      saved_by_handle: 'tester',
+      saved_by_platform: 'instagram',
+      annotation: null,
+      tags: [],
+    });
+    await upsertOnSave({
+      user_id: userId,
+      platform: 'instagram',
+      post_id: 'CASE_EMPTY_OLD_014',
+      canonical_url: 'https://www.instagram.com/reel/CASE_EMPTY_OLD_014/',
+      saved_by_handle: 'tester',
+      saved_by_platform: 'instagram',
+      annotation: 'second note',
+      tags: [],
+    });
+    const { data } = await supabaseAdmin
+      .from('saved_items')
+      .select('annotation')
+      .eq('id', r1.id)
+      .single();
+    expect(data?.annotation).toBe('second note');
   });
 
   it('updateScrapedContent + markReady + state transitions', async () => {
