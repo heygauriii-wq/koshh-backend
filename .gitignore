@@ -5,3 +5,4 @@ dist
 supabase/.temp
 .claude/
 .4a-build.md
+.DS_Store
