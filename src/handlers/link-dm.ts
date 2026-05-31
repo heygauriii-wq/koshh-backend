@@ -4,6 +4,7 @@ import { maskEmail } from '../lib/mask-email';
 
 export type LinkDMPayload = {
   sender_handle: string;
+  sender_id: string | null;
   platform: 'instagram' | 'tiktok';
   body: string;
   // mid passed for log correlation only — idempotency was M11's job upstream
@@ -22,13 +23,13 @@ export async function handleLinkDM(payload: LinkDMPayload): Promise<LinkDMResult
 
   // Defense in depth — M4a's router already gated on this regex.
   if (!LINK_CODE_REGEX.test(link_code)) {
-    await sendDM({ handle: payload.sender_handle, platform: payload.platform, copy_key: 'code_no_match' });
+    await sendDM({ recipient_id: payload.sender_id, handle: payload.sender_handle, platform: payload.platform, copy_key: 'code_no_match' });
     return { ok: false, reason: 'code_no_match' };
   }
 
   const user = await matchLinkCode(link_code);
   if (!user) {
-    await sendDM({ handle: payload.sender_handle, platform: payload.platform, copy_key: 'code_no_match' });
+    await sendDM({ recipient_id: payload.sender_id, handle: payload.sender_handle, platform: payload.platform, copy_key: 'code_no_match' });
     return { ok: false, reason: 'code_no_match' };
   }
 
@@ -39,6 +40,7 @@ export async function handleLinkDM(payload: LinkDMPayload): Promise<LinkDMResult
   if (existing && existing.user_id !== user.id) {
     const ownerEmail = await getUserEmail(existing.user_id);
     await sendDM({
+      recipient_id: payload.sender_id,
       handle: payload.sender_handle,
       platform: payload.platform,
       copy_key: 'bound_elsewhere',
@@ -49,19 +51,19 @@ export async function handleLinkDM(payload: LinkDMPayload): Promise<LinkDMResult
 
   if (existing && existing.user_id === user.id) {
     // Idempotent re-link from the same user's already-linked handle.
-    await sendDM({ handle: payload.sender_handle, platform: payload.platform, copy_key: 'link_confirm' });
+    await sendDM({ recipient_id: payload.sender_id, handle: payload.sender_handle, platform: payload.platform, copy_key: 'link_confirm' });
     return { ok: true, outcome: 'already_linked' };
   }
 
   const liveCount = await countLiveHandles(user.id);
   if (liveCount >= FIVE_HANDLE_CAP) {
-    await sendDM({ handle: payload.sender_handle, platform: payload.platform, copy_key: 'cap_reached' });
+    await sendDM({ recipient_id: payload.sender_id, handle: payload.sender_handle, platform: payload.platform, copy_key: 'cap_reached' });
     return { ok: false, reason: 'cap_reached' };
   }
 
-  const result = await reviveOrInsert(user.id, payload.sender_handle, payload.platform);
+  const result = await reviveOrInsert(user.id, payload.sender_handle, payload.platform, payload.sender_id);
 
-  await sendDM({ handle: payload.sender_handle, platform: payload.platform, copy_key: 'link_confirm' });
+  await sendDM({ recipient_id: payload.sender_id, handle: payload.sender_handle, platform: payload.platform, copy_key: 'link_confirm' });
   return { ok: true, outcome: result.action };
 }
 
@@ -114,11 +116,12 @@ async function countLiveHandles(user_id: string): Promise<number> {
 async function reviveOrInsert(
   user_id: string,
   handle: string,
-  platform: 'instagram' | 'tiktok'
+  platform: 'instagram' | 'tiktok',
+  sender_id: string | null,
 ): Promise<{ action: 'linked' | 'revived' }> {
   const { data: revived, error: reviveErr } = await supabaseAdmin
     .from('linked_handles')
-    .update({ unlinked_at: null })
+    .update({ unlinked_at: null, platform_user_id: sender_id })
     .eq('user_id', user_id)
     .eq('handle', handle)
     .eq('platform', platform)
@@ -131,7 +134,7 @@ async function reviveOrInsert(
 
   const { error: insertErr } = await supabaseAdmin
     .from('linked_handles')
-    .insert({ user_id, handle, platform });
+    .insert({ user_id, handle, platform, platform_user_id: sender_id });
 
   if (insertErr) {
     // 23505 = unique_violation against linked_handles_unique_live. Means a

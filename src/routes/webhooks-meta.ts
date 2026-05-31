@@ -141,6 +141,7 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
         case 'link': {
           sends.push(handleLinkDM({
             sender_handle: senderHandle,
+            sender_id: senderId ?? null,
             platform: 'instagram',
             body: text.trim().toLowerCase(),
             mid,
@@ -161,6 +162,7 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
           if (merge.merged_count > 0) break;
 
           sends.push(sendDM({
+            recipient_id: senderId ?? null,
             handle: senderHandle,
             platform: 'instagram',
             copy_key: 'no_url',
@@ -173,9 +175,10 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
           // the actual fetch/store; for now we tell the user we can only
           // handle forwarded posts and Reels.
           sends.push(sendDM({
+            recipient_id: senderId ?? null,
             handle: senderHandle,
             platform: 'instagram',
-            copy_key: 'unsupported_attachment',
+            copy_key: 'unsupported_url',
           }));
           break;
         }
@@ -193,6 +196,7 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
 
           if (!live) {
             sends.push(sendDM({
+              recipient_id: senderId ?? null,
               handle: senderHandle,
               platform: 'instagram',
               copy_key: 'stranger',
@@ -202,9 +206,11 @@ router.post('/webhooks/meta', captureRawBody, async (req: Request, res: Response
 
           // 4a.6 — ack
           sends.push(sendDM({
+            recipient_id: senderId ?? null,
             handle: senderHandle,
             platform: 'instagram',
             copy_key: 'step1_ack',
+            retryBudget: 2, // Latency-sensitive: webhook handler holds connection
           }));
 
           // 4a.7 — Step 10: buffer one staging row per URL. The dm-staging

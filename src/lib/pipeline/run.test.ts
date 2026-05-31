@@ -37,6 +37,7 @@ vi.mock('../url-validation', () => ({
 // matching the test payload's user_id. Tests override per-case.
 const linkedHandleStub = {
   user_id: 'usr-1',
+  platform_user_id: 'IGSID_TEST',
 };
 const linkedHandleMaybeSingle = vi.fn();
 
@@ -167,16 +168,20 @@ describe('runPipeline', () => {
     expect(repo.markReady).not.toHaveBeenCalled();
   });
 
-  it('stranger sender: linked_handles miss → stranger DM, no row', async () => {
+  it('stranger sender: linked_handles miss → no DM (no platform_user_id), no row', async () => {
+    // linked_handles miss = no IGSID = can't send DM. Pipeline silently skips
+    // the DM and returns early (upsertOnSave also won't be called because
+    // sender validation fails first).
     linkedHandleMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
     await runPipeline(validPayload());
 
     expect(repo.upsertOnSave).not.toHaveBeenCalled();
-    expect(dm.sendDM).toHaveBeenCalledWith(expect.objectContaining({ copy_key: 'stranger' }));
+    // No platform_user_id → sendDM not called (M12 contract: requires recipient_id)
+    expect(dm.sendDM).not.toHaveBeenCalled();
   });
 
   it('stranger sender: linked to a DIFFERENT user → stranger DM', async () => {
-    linkedHandleMaybeSingle.mockResolvedValueOnce({ data: { user_id: 'usr-other' }, error: null });
+    linkedHandleMaybeSingle.mockResolvedValueOnce({ data: { user_id: 'usr-other', platform_user_id: 'IGSID_OTHER' }, error: null });
     await runPipeline(validPayload());
 
     expect(repo.upsertOnSave).not.toHaveBeenCalled();

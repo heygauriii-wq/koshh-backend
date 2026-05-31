@@ -39,11 +39,14 @@ export async function runPipeline(payload: PipelinePayload): Promise<void> {
   // M4a's gate when it ships.
   const sender = await lookupSender(payload.sender_handle, payload.platform);
   if (!sender || sender.user_id !== payload.user_id) {
-    await sendDM({
-      handle: payload.sender_handle,
-      platform: payload.platform,
-      copy_key: 'stranger',
-    });
+    if (sender?.platform_user_id) {
+      await sendDM({
+        recipient_id: sender.platform_user_id,
+        handle: payload.sender_handle,
+        platform: payload.platform,
+        copy_key: 'stranger',
+      });
+    }
     return;
   }
 
@@ -55,11 +58,14 @@ export async function runPipeline(payload: PipelinePayload): Promise<void> {
     attachment_type: payload.attachment_type ?? undefined,
   });
   if (!validated.ok) {
-    await sendDM({
-      handle: payload.sender_handle,
-      platform: payload.platform,
-      copy_key: copyKeyForRejectReason(validated.reason),
-    });
+    if (sender.platform_user_id) {
+      await sendDM({
+        recipient_id: sender.platform_user_id,
+        handle: payload.sender_handle,
+        platform: payload.platform,
+        copy_key: copyKeyForRejectReason(validated.reason),
+      });
+    }
     return;
   }
   ctx.validated = {
@@ -83,11 +89,14 @@ export async function runPipeline(payload: PipelinePayload): Promise<void> {
   ctx.item_id = id;
 
   if (!was_inserted) {
-    await sendDM({
-      handle: payload.sender_handle,
-      platform: payload.platform,
-      copy_key: 'update_confirm',
-    });
+    if (sender.platform_user_id) {
+      await sendDM({
+        recipient_id: sender.platform_user_id,
+        handle: payload.sender_handle,
+        platform: payload.platform,
+        copy_key: 'update_confirm',
+      });
+    }
     return;
   }
 
@@ -107,11 +116,14 @@ export async function runPipeline(payload: PipelinePayload): Promise<void> {
       ctx.validated.platform,
       ctx.validated.post_id,
     );
-    await sendDM({
-      handle: payload.sender_handle,
-      platform: payload.platform,
-      copy_key: 'content_unavailable',
-    });
+    if (sender.platform_user_id) {
+      await sendDM({
+        recipient_id: sender.platform_user_id,
+        handle: payload.sender_handle,
+        platform: payload.platform,
+        copy_key: 'content_unavailable',
+      });
+    }
     return;
   }
   await updateScrapedContent(id, scraped);
@@ -185,16 +197,16 @@ export async function runPipeline(payload: PipelinePayload): Promise<void> {
 async function lookupSender(
   handle: string,
   platform: string,
-): Promise<{ user_id: string } | null> {
+): Promise<{ user_id: string; platform_user_id: string | null } | null> {
   const { data, error } = await supabaseAdmin
     .from('linked_handles')
-    .select('user_id')
+    .select('user_id, platform_user_id')
     .eq('handle', handle)
     .eq('platform', platform)
     .is('unlinked_at', null)
     .maybeSingle();
   if (error) throw new Error(`lookupSender failed: ${error.message}`);
-  return (data as { user_id: string } | null) ?? null;
+  return (data as { user_id: string; platform_user_id: string | null } | null) ?? null;
 }
 
 async function resolveCreatorFollowerCount(
