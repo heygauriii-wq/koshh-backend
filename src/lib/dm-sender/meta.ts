@@ -6,20 +6,24 @@ const META_API_HOST = 'https://graph.instagram.com';
 const API_VERSION = 'v23.0';
 const TIMEOUT_MS = 5000;
 
-const TOKEN = process.env.META_PAGE_ACCESS_TOKEN;
-const IG_ACCOUNT_ID = process.env.META_IG_BUSINESS_ACCOUNT_ID;
-
-if (!TOKEN) {
-  throw new Error('META_PAGE_ACCESS_TOKEN not set');
-}
-if (!IG_ACCOUNT_ID) {
-  throw new Error('META_IG_BUSINESS_ACCOUNT_ID not set');
-}
-
 async function sendViaMetaOnce(
   recipient_id: string,
   text: string,
 ): Promise<BareResult> {
+  // Read credentials lazily (at send time, NOT at module load) so a missing
+  // outbound-DM token can't crash the whole service at boot. A send attempted
+  // without config fails quiet as a permanent error (no retry), per D-009 —
+  // the webhook/pipeline keeps running; only the DM is dropped + logged.
+  const TOKEN = process.env.META_PAGE_ACCESS_TOKEN;
+  const IG_ACCOUNT_ID = process.env.META_IG_BUSINESS_ACCOUNT_ID;
+  if (!TOKEN || !IG_ACCOUNT_ID) {
+    return {
+      success: false,
+      error_code: 'oauth_exception',
+      error_message: 'META_PAGE_ACCESS_TOKEN / META_IG_BUSINESS_ACCOUNT_ID not set',
+    };
+  }
+
   const url = `${META_API_HOST}/${API_VERSION}/${IG_ACCOUNT_ID}/messages`;
 
   const controller = new AbortController();
